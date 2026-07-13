@@ -1,0 +1,705 @@
+{
+  "name": "Job Hunting - Mark as Applied Confirmation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 11 * * *"
+            }
+          ]
+        }
+      },
+      "id": "4fa9b2e3-bdfe-4693-8f56-dc4c276f2a21",
+      "name": "Schedule - 11:30 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-3088, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst jobs = (resp.data && Array.isArray(resp.data.jobs)) ? resp.data.jobs : (Array.isArray(resp.data) ? resp.data : (resp.jobs || []));\n\nif (!Array.isArray(jobs) || jobs.length === 0) {\n  return [];\n}\n\nreturn jobs.map(job => ({\n  json: {\n    job_id: job.job_id || job.id || '',\n    title: job.job_title || job.title || '',\n    company: job.employer_name || job.company || '',\n    description: job.job_description || job.description || '',\n    job_url: job.job_apply_link || job.job_url || '',\n    source: 'jsearch'\n  }\n}));"
+      },
+      "id": "b2a81822-8ed2-41f4-b40e-de41724997b4",
+      "name": "Extract Job List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2272, 400],
+      "notes": "Splits the JSearch API response's data array into one n8n item per job. Without this, Loop Over Jobs was looping over a single combined response instead of individual jobs."
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "615eeb9e-e596-4fe1-8836-68f6774d6185",
+      "name": "Loop Over Jobs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-1696, 80]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "https://docs.google.com/document/d/1z9DKaQy5xMU_KxppZdSBgZGP1jb9DG09Og12K8-n198/edit?tab=t.0",
+          "mode": "url"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "id": "deafbc1c-7dbd-4899-a1c0-3ba8a32727ab",
+      "name": "Get Master Resume",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [-1312, 256],
+      "credentials": {
+        "googleApi": {
+          "id": "aYfa0k6BnRn9j3HS",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Master resume must be a Google Doc. googleFileConversion exports it as plain text so it downloads as readable text, not raw Google Docs binary."
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "1584036d-f548-4d19-9558-61df172d340c",
+      "name": "Convert Resume Binary to Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [-1088, 256]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const job = $('Loop Over Jobs').item.json;\nconst resumeText = $('Convert Resume Binary to Text').item.json.text || $('Convert Resume Binary to Text').item.json.data || '';\n\nconst promptText = `You are a careful resume-tailoring assistant. Adapt the candidate resume below to the job description.\\n\\nDo not invent experience, titles, or metrics that are not present in the source resume. Produce a finished, tailored resume in clear text format.\\n\\nJOB TITLE: ${job.title}\\nCOMPANY: ${job.company}\\n\\nJOB DESCRIPTION:\\n${job.description}\\n\\nMASTER RESUME:\\n${resumeText}\\n\\nTailor this resume for the job above.`;\n\nconst body = {\n  contents: [\n    {\n      parts: [\n        { text: promptText }\n      ]\n    }\n  ]\n};\n\nreturn { json: { body, jobTitle: job.title, company: job.company, jobUrl: job.job_url, jobId: job.job_id } };"
+      },
+      "id": "c0c978d6-3a72-4a39-8ad2-7361f79c2336",
+      "name": "Build Gemini Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-864, 256]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "dd2a423a-e837-4850-923b-779601302492",
+      "name": "Call Gemini - Tailor Resume",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-656, 256],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0jQ8HVED01Ge0bE4",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "notes": "Uses Gemini 2.0 Flash (free tier). Fixed invalid model name 'gemini-3.5-flash'. API key moved out of the URL into an HTTP Header Auth credential using header 'x-goog-api-key' — never put keys in plain URLs."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.statusCode}}",
+              "rightValue": 429,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              },
+              "id": "acf87c73-1a78-4b58-b2df-1ceda677cf18"
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "e859bae6-43b8-4ff5-bd43-2421a65d3883",
+      "name": "Check Session Limit",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [-368, 16]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8898215930:AAEwD9zLqZGctWWqianKcldTMkyd1DXbjcQ/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "1075335869"
+            },
+            {
+              "name": "text",
+              "value": "⚠️ Gemini API Free Tier rate limit reached. Workflow paused."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9b33f6cb-9bef-4d55-8686-0afadd6132aa",
+      "name": "Notify - Session Reached",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "errorMessage": "Gemini API rate limit reached. Halting today's run."
+      },
+      "id": "262234b3-4586-40d5-8b28-d8a19d2fb23d",
+      "name": "Stop Workflow",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [432, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resp = $json.body || $json;\nconst tailoredText = resp.candidates?.[0]?.content?.parts?.[0]?.text || '';\nconst prev = $('Build Gemini Request').item.json;\nreturn { json: { tailoredResume: tailoredText, jobTitle: prev.jobTitle, company: prev.company, jobUrl: prev.jobUrl, jobId: prev.jobId } };"
+      },
+      "id": "ce3098de-d54e-4571-89d5-9efed0e67537",
+      "name": "Extract Tailored Resume Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-160, 304]
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "createFromText",
+        "content": "={{ $json.tailoredResume }}",
+        "name": "={{ $('Extract Tailored Resume Text').item.json.company }} - {{ $('Extract Tailored Resume Text').item.json.jobTitle }} Resume.txt",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/16ON8zQ9qG_1hT4Lyg7YKj76iNX5Qid09",
+          "mode": "url"
+        },
+        "options": {}
+      },
+      "id": "a9948975-7ef3-401d-869d-d7d7ba3c8e3c",
+      "name": "Create file from text",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [96, 304],
+      "credentials": {
+        "googleApi": {
+          "id": "aYfa0k6BnRn9j3HS",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "notes": "Removed the invalid 'driveId' (was set to a folder URL, but that field expects a Shared Drive ID). Only folderId is needed for a My Drive destination. Error output feeds the failure notification instead of killing the run."
+    },
+    {
+      "parameters": {
+        "chatId": "1075335869",
+        "text": "=🎯 {{ $('Extract Tailored Resume Text').item.json.jobTitle }} at {{ $('Extract Tailored Resume Text').item.json.company }}\n\nTailored resume saved to Drive. Tap Apply, then confirm once you've submitted it.",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔗 Apply Now",
+                    "additionalFields": {
+                      "url": "={{ $('Extract Tailored Resume Text').item.json.jobUrl }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Mark as Applied",
+                    "additionalFields": {
+                      "callback_data": "applied"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "45e45fce-afcb-4c4a-a370-68479953ed61",
+      "name": "Send Apply Prompt",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [352, 208],
+      "webhookId": "193e022d-9368-4e0f-8e4e-d825be7491d6",
+      "credentials": {
+        "telegramApi": {
+          "id": "ArmZJ3QgkiKvezYP",
+          "name": "Telegram account"
+        }
+      },
+      "notes": "Renamed from 'Send a text message'. No longer claims submission (was false before -- workflow never actually applied). Sends the apply link + a confirm button. Actual 'submitted' confirmation now comes from the companion workflow (Telegram callback) once you tap the button. Verify inlineKeyboard param names against your n8n Telegram node version in the UI."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8898215930:AAEwD9zLqZGctWWqianKcldTMkyd1DXbjcQ/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "1075335869"
+            },
+            {
+              "name": "text",
+              "value": "=❌ Could not save/submit: {{$('Extract Tailored Resume Text').item.json.jobTitle}} at {{$('Extract Tailored Resume Text').item.json.company}} - apply manually: {{$('Extract Tailored Resume Text').item.json.jobUrl}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a65e1d1c-ab12-4221-ab14-5f39c38df726",
+      "name": "Notify - Submission Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [352, 448],
+      "notes": "Was previously disconnected from the workflow and could never fire. Now wired to the error output of 'Create file from text'."
+    },
+    {
+      "parameters": {},
+      "id": "1dd7e914-bd11-4995-96e5-61c84e840aa9",
+      "name": "All Jobs Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [-704, 64]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/cheap_scraper~linkedin-job-scraper/run-sync-get-dataset-items",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "apify_api_E0LimLBL4QjKjwifXnrsfbRXzRq4Zl3ll3IB"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ keyword: [\"Performance Marketing\"], location: \"Chennai, India\", publishedAt: \"r86400\", filterEasyApply: true, count: 20 }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "2c0c1a1b-5a89-40be-a7cb-a47dcfba570a",
+      "name": "Fetch LinkedIn Jobs (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-2656, 1056],
+      "notes": "Apify Actor cheap_scraper/linkedin-job-scraper, pay-per-event ($0.0007-0.005/result). Covered by Apify's free $5/mo credit for this volume. Set APIFY_TOKEN env var (Apify Console > Settings > API tokens). Verify output field names against a live run before trusting the mapping below -- Apify actor schemas change."
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nreturn items.map(job => ({\n  json: {\n    job_id: job.jobUrl || job.url || job.id || '',\n    title: job.title || job.jobTitle || '',\n    company: job.companyName || job.company || '',\n    description: job.description || job.jobDescription || '',\n    job_url: job.jobUrl || job.applyUrl || job.url || '',\n    source: 'linkedin'\n  }\n})).filter(i => i.json.title);"
+      },
+      "id": "40d84f2c-c9f4-4153-ac3c-a2f50d8bfb34",
+      "name": "Extract LinkedIn Job List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-2256, 1056],
+      "notes": "Field names (title/companyName/jobUrl/description) are best-guess from the Apify actor listing -- run once, inspect the dataset item keys, adjust if they differ."
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "31f78f7e-1481-4ae5-b28b-c0adb5be04c5",
+      "name": "Merge Job Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [-1264, 704],
+      "alwaysOutputData": true,
+      "notesInFlow": true,
+      "notes": "THIS NODE WORKED WELL NO WORRIES "
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst seen = new Set();\nconst out = [];\nfor (const job of items) {\n  const key = (job.company + '|' + job.title).toLowerCase().trim();\n  if (!job.title || seen.has(key)) continue;\n  seen.add(key);\n  out.push({ json: job });\n}\nreturn out;"
+      },
+      "id": "53d95d53-bd6c-4c08-99be-425e8bc3d61d",
+      "name": "Dedupe Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1264, 528]
+    },
+    {
+      "parameters": {
+        "url": "https://jsearch.p.rapidapi.com/search-v2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "junior performance marketing fresher jobs in india"
+            },
+            {
+              "name": "num_pages",
+              "value": "1"
+            },
+            {
+              "name": "country",
+              "value": "in"
+            },
+            {
+              "name": "date_posted",
+              "value": "week"
+            },
+            {
+              "name": "employment_types",
+              "value": "FULLTIME"
+            },
+            {
+              "name": "job_requirements",
+              "value": "no_experience"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-rapidapi-host",
+              "value": "jsearch.p.rapidapi.com"
+            },
+            {
+              "name": "x-rapidapi-key",
+              "value": "4d24829c7amshce72586aa0fd6bdp1c2736jsnf9fb78cb89bf"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{}]
+        },
+        "options": {}
+      },
+      "id": "99984196-b8dd-40e2-839b-22fe661f5109",
+      "name": "Fetch New Job Listings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-2624, 400],
+      "notes": "JSearch endpoint. Attach an HTTP Header Auth credential named 'X-RapidAPI-Key' with your RapidAPI key as the value. Never hardcode keys in node parameters."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 16 * * *"
+            }
+          ]
+        }
+      },
+      "id": "8944b080-449b-4d54-92bc-3eb741ad76a1",
+      "name": "Schedule - 4:00 PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-3120, 1056]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule - 11:30 AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch New Job Listings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule - 4:00 PM": {
+      "main": [
+        [
+          {
+            "node": "Fetch LinkedIn Jobs (Apify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch New Job Listings": {
+      "main": [
+        [
+          {
+            "node": "Extract Job List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job List": {
+      "main": [
+        [
+          {
+            "node": "Merge Job Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch LinkedIn Jobs (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Extract LinkedIn Job List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract LinkedIn Job List": {
+      "main": [
+        [
+          {
+            "node": "Merge Job Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Job Sources": {
+      "main": [
+        [
+          {
+            "node": "Dedupe Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe Jobs": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Jobs": {
+      "main": [
+        [
+          {
+            "node": "Get Master Resume",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "All Jobs Done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Master Resume": {
+      "main": [
+        [
+          {
+            "node": "Convert Resume Binary to Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Resume Binary to Text": {
+      "main": [
+        [
+          {
+            "node": "Build Gemini Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gemini Request": {
+      "main": [
+        [
+          {
+            "node": "Call Gemini - Tailor Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Gemini - Tailor Resume": {
+      "main": [
+        [
+          {
+            "node": "Check Session Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Session Limit": {
+      "main": [
+        [
+          {
+            "node": "Notify - Session Reached",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Tailored Resume Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify - Session Reached": {
+      "main": [
+        [
+          {
+            "node": "Stop Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tailored Resume Text": {
+      "main": [
+        [
+          {
+            "node": "Create file from text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create file from text": {
+      "main": [
+        [
+          {
+            "node": "Send Apply Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify - Submission Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Apply Prompt": {
+      "main": []
+    },
+    "Notify - Submission Failed": {
+      "main": []
+    },
+    "All Jobs Done": {
+      "main": []
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Kolkata",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "49a5c8ae-7ffe-4032-a68a-68cc3540c433",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bef4ceaf65edd76f3d04e966d4cf28f2eef903ad3f15eb3bdd5086c50c585567"
+  },
+  "id": "tJk4ADc75NC0f0kW",
+  "tags": []
+}
