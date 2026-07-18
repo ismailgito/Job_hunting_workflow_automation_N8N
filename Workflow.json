@@ -1,0 +1,1440 @@
+{
+  "name": "Job Hunting - Mark as Applied Confirmation - Callback Fix",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const resp = $input.first().json;\nconst jobs = (resp.data && Array.isArray(resp.data.jobs)) ? resp.data.jobs : (Array.isArray(resp.data) ? resp.data : (resp.jobs || []));\n\nif (!Array.isArray(jobs) || jobs.length === 0) {\n  return [];\n}\n\nreturn jobs.map(job => ({\n  json: {\n    job_id: job.job_id || job.id || '',\n    title: job.job_title || job.title || '',\n    company: job.employer_name || job.company || '',\n    description: job.job_description || job.description || '',\n    job_url: job.job_apply_link || job.job_url || '',\n    source: 'jsearch'\n  }\n}));"
+      },
+      "id": "9a87ea61-cd90-48c5-935b-568e899a77b6",
+      "name": "Extract Job List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3120,
+        -624
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "d7367a35-b0ce-4dd8-bb47-7d664ee36703",
+      "name": "Loop Over Jobs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -2544,
+        -944
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "https://docs.google.com/document/d/1z9DKaQy5xMU_KxppZdSBgZGP1jb9DG09Og12K8-n198/edit?tab=t.0",
+          "mode": "url"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "application/pdf"
+            }
+          }
+        }
+      },
+      "id": "6a2f1ef6-dd30-439d-8c53-dbefffff2351",
+      "name": "Get Master Resume",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -2160,
+        -768
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "adohcycsJyqAVATT",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "f439b449-b3b6-40e8-b94f-2c77acec19b7",
+      "name": "Convert Resume Binary to Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -1936,
+        -768
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const job = $('Loop Over Jobs').item.json;\nconst resumeText = $('Convert Resume Binary to Text').item.json.text || $('Convert Resume Binary to Text').item.json.data || '';\n\nconst promptText = `You are a careful resume-tailoring assistant. Adapt the candidate resume below to the job description.\\n\\nDo not invent experience, titles, or metrics that are not present in the source resume. Produce a finished, tailored resume in clear text format.\\n\\nJOB TITLE: ${job.title}\\nCOMPANY: ${job.company}\\n\\nJOB DESCRIPTION:\\n${job.description}\\n\\nMASTER RESUME:\\n${resumeText}\\n\\nTailor this resume for the job above.`;\n\nconst body = {\n  contents: [\n    {\n      parts: [\n        { text: promptText }\n      ]\n    }\n  ]\n};\n\nreturn { json: { body, jobTitle: job.title, company: job.company, jobUrl: job.job_url, jobId: job.job_id } };"
+      },
+      "id": "be63106f-8363-4b30-8452-15c5350d76e8",
+      "name": "Build Gemini Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1712,
+        -768
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "b463dc9e-4a73-4e03-bd34-8fd71f872afc",
+      "name": "Call Gemini - Tailor Resume",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1504,
+        -768
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0jQ8HVED01Ge0bE4",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.statusCode}}",
+              "rightValue": 429,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6b351017-72f8-4257-8b64-77d0cbaead4c",
+      "name": "Check Session Limit",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1216,
+        -1008
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8898215930:AAEwD9zLqZGctWWqianKcldTMkyd1DXbjcQ/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "1075335869"
+            },
+            {
+              "name": "text",
+              "value": "⚠️ Gemini API Free Tier rate limit reached. Workflow paused."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6ce13e1d-147d-41ef-957d-78606f3ada10",
+      "name": "Notify - Session Reached",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -848,
+        -1024
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "Gemini API rate limit reached. Halting today's run."
+      },
+      "id": "e9ffbebb-c387-4ccb-aeb9-2b2df4a4fbc6",
+      "name": "Stop Workflow",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        -416,
+        -1024
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const resp = $json.body || $json;\nconst tailoredText = resp.candidates?.[0]?.content?.parts?.[0]?.text || '';\nconst prev = $('Build Gemini Request').item.json;\nconst rawUrl = prev.jobUrl || '';\nconst finalUrl = rawUrl.trim().startsWith('http') ? rawUrl.trim() : 'https://www.linkedin.com/jobs/';\nlet cleanId = prev.jobId || '';\nif (cleanId.includes('http') || cleanId.length > 35) {\n  cleanId = cleanId.split('?')[0].split('/').pop().substring(0, 30);\n}\nif (!cleanId) {\n  cleanId = Math.random().toString(36).substring(2, 12);\n}\nreturn { json: { tailoredResume: tailoredText, jobTitle: prev.jobTitle, company: prev.company, jobUrl: finalUrl, jobId: cleanId } };"
+      },
+      "id": "099a4ad1-0ee0-4706-8511-e10d94b401e7",
+      "name": "Extract Tailored Resume Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        -464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "createFromText",
+        "content": "={{ $json.tailoredResume }}",
+        "name": "={{ $('Extract Tailored Resume Text').item.json.company }} - {{ $('Extract Tailored Resume Text').item.json.jobTitle }} Resume (draft)",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/16ON8zQ9qG_1hT4Lyg7YKj76iNX5Qid09",
+          "mode": "url"
+        },
+        "options": {
+          "convertToGoogleDocument": true
+        }
+      },
+      "id": "2bf81851-f185-4374-97f3-33b21eee8803",
+      "name": "Create file from text",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -1280,
+        -240
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "adohcycsJyqAVATT",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create file from text').item.json.id }}"
+        },
+        "options": {
+          "binaryPropertyName": "data",
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "application/pdf"
+            }
+          }
+        }
+      },
+      "id": "e4ccfdcd-84b7-46d3-a758-a9eb2e98acec",
+      "name": "Export Resume as PDF",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -768,
+        -256
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "adohcycsJyqAVATT",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Extract Tailored Resume Text').item.json.company }} - {{ $('Extract Tailored Resume Text').item.json.jobTitle }} Resume.pdf",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/16ON8zQ9qG_1hT4Lyg7YKj76iNX5Qid09",
+          "mode": "url"
+        },
+        "options": {
+          "simplifyOutput": false
+        }
+      },
+      "id": "65d4fb43-e0fa-441e-9353-88092cddee87",
+      "name": "Upload Resume PDF",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -416,
+        -272
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "adohcycsJyqAVATT",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "deleteFile",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Create file from text').item.json.id }}"
+        },
+        "options": {
+          "deletePermanently": false
+        }
+      },
+      "id": "2919fded-15a2-46b9-816d-f657b59e5d9a",
+      "name": "Delete Draft Google Doc",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -32,
+        -288
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "adohcycsJyqAVATT",
+          "name": "Google Drive account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "1075335869",
+        "text": "=🎯 {{ $('Extract Tailored Resume Text').item.json.jobTitle }} at {{ $('Extract Tailored Resume Text').item.json.company }}\n\nTailored resume saved to Drive. Tap Apply, then confirm once you've submitted it.",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "🔗 Apply Now",
+                    "additionalFields": {
+                      "url": "={{ $('Extract Tailored Resume Text').item.json.jobUrl }}"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "✅ Mark as Submitted",
+                    "additionalFields": {
+                      "callback_data": "=submitted_{{ $('Extract Tailored Resume Text').item.json.jobId }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "id": "0c9e4480-c210-4d68-b7d4-9a707581f02f",
+      "name": "Send Apply Prompt",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -192,
+        -816
+      ],
+      "webhookId": "193e022d-9368-4e0f-8e4e-d825be7491d6",
+      "credentials": {
+        "telegramApi": {
+          "id": "ArmZJ3QgkiKvezYP",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8898215930:AAEwD9zLqZGctWWqianKcldTMkyd1DXbjcQ/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "1075335869"
+            },
+            {
+              "name": "text",
+              "value": "=❌ Could not save/submit: {{$('Extract Tailored Resume Text').item.json.jobTitle}} at {{$('Extract Tailored Resume Text').item.json.company}} - apply manually: {{$('Extract Tailored Resume Text').item.json.jobUrl}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c46c8862-cc95-416a-81c6-dae327174ce7",
+      "name": "Notify - Submission Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -960,
+        96
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "800b3512-72c9-4b6e-9c6a-beb5475d9986",
+      "name": "All Jobs Done",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -2160,
+        -960
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/cheap_scraper~linkedin-job-scraper/run-sync-get-dataset-items",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "apify_api_E0LimLBL4QjKjwifXnrsfbRXzRq4Zl3ll3IB"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ keyword: [\"Performance Marketing\"], location: \"Chennai, India\", publishedAt: \"r86400\", filterEasyApply: true, count: 20 }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "8e9e4bea-cc3b-4e1b-bec2-0a5885257823",
+      "name": "Fetch LinkedIn Jobs (Apify)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3504,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nreturn items.map(job => ({\n  json: {\n    job_id: job.jobUrl || job.url || job.id || '',\n    title: job.title || job.jobTitle || '',\n    company: job.companyName || job.company || '',\n    description: job.description || job.jobDescription || '',\n    job_url: job.jobUrl || job.applyUrl || job.url || '',\n    source: 'linkedin'\n  }\n})).filter(i => i.json.title);"
+      },
+      "id": "65ca3c20-060c-4ddb-b3e4-cb275a02310d",
+      "name": "Extract LinkedIn Job List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3104,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "e68a7cf5-8603-4b7c-9d14-d9a10e969c55",
+      "name": "Merge Job Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        -2112,
+        -320
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nconst seen = new Set();\nconst out = [];\nfor (const job of items) {\n  const key = (job.company + '|' + job.title).toLowerCase().trim();\n  if (!job.title || seen.has(key)) continue;\n  seen.add(key);\n  out.push({ json: job });\n}\nreturn out;"
+      },
+      "id": "028432c4-e3de-417d-a852-bb50f426db22",
+      "name": "Dedupe Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2112,
+        -496
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://jsearch.p.rapidapi.com/search-v2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "junior performance marketing fresher jobs in india"
+            },
+            {
+              "name": "num_pages",
+              "value": "1"
+            },
+            {
+              "name": "country",
+              "value": "in"
+            },
+            {
+              "name": "date_posted",
+              "value": "week"
+            },
+            {
+              "name": "employment_types",
+              "value": "FULLTIME"
+            },
+            {
+              "name": "job_requirements",
+              "value": "no_experience"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-rapidapi-host",
+              "value": "jsearch.p.rapidapi.com"
+            },
+            {
+              "name": "x-rapidapi-key",
+              "value": "4d24829c7amshce72586aa0fd6bdp1c2736jsnf9fb78cb89bf"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {}
+      },
+      "id": "fc66dc9d-395a-4b5b-b814-6a4b6dc6f3aa",
+      "name": "Fetch New Job Listings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3472,
+        -624
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 16 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cc2c3968-7f8e-402c-92e7-2d6f21f39d35",
+      "name": "Schedule - 4:00 PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -4176,
+        -288
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1CU4lnucXtczQPdayWnJ6bh336M7UhKOVLBY4gatYTbI",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Applications"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Company": "={{ $('Extract Tailored Resume Text').item.json.company }}",
+            "Job Role": "={{ $('Extract Tailored Resume Text').item.json.jobTitle }}",
+            "URL": "={{ $('Extract Tailored Resume Text').item.json.jobUrl }}",
+            "Status": "Pending",
+            "Linked URL": "={{ $('Upload Resume PDF').item.json.webViewLink }}",
+            "Job ID": "={{ $('Extract Tailored Resume Text').item.json.jobId }}",
+            "Date Notified": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "578f67e1-6a10-4e99-bcf9-15e4d386c61d",
+      "name": "Log Notified - Pending",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        272,
+        -816
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZszMNlKAqV742gYX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1CU4lnucXtczQPdayWnJ6bh336M7UhKOVLBY4gatYTbI",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Applications"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Company": "={{ $('Extract Tailored Resume Text').item.json.company }}",
+            "Job Role": "={{ $('Extract Tailored Resume Text').item.json.jobTitle }}",
+            "URL": "={{ $('Extract Tailored Resume Text').item.json.jobUrl }}",
+            "Status": "Failed - Resume Not Created",
+            "Job ID": "={{ $('Extract Tailored Resume Text').item.json.jobId }}",
+            "Date Notified": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "e295c95e-a141-41b6-b5fd-ad95386f88eb",
+      "name": "Log Failed - Resume Not Created",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -560,
+        96
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZszMNlKAqV742gYX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 12,
+        "unit": "hours"
+      },
+      "id": "6444aee0-26e6-4d29-96ac-52c833c975a6",
+      "name": "Wait 12 Hours",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        688,
+        -816
+      ],
+      "webhookId": "74b1390c-2987-4d8d-805c-57c0bca883b8"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1CU4lnucXtczQPdayWnJ6bh336M7UhKOVLBY4gatYTbI",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Applications"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Job ID",
+              "lookupValue": "={{ $json['Job ID'] }}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "id": "fea07414-5a47-45a2-b371-ba4479377ef5",
+      "name": "Check Submission Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        -816
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZszMNlKAqV742gYX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.Status }}",
+              "rightValue": "Submitted",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "106b326d-539a-44c5-a4b8-29ad29018f97",
+      "name": "Already Submitted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -816
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b97c5b60-8bfb-4462-8ee2-e7d1134dc442",
+      "name": "No Action Needed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1904,
+        -832
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1CU4lnucXtczQPdayWnJ6bh336M7UhKOVLBY4gatYTbI",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Applications"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "Job ID"
+          ],
+          "value": {
+            "Job ID": "={{ $json['Job ID'] }}",
+            "Status": "Not-Submitted"
+          }
+        },
+        "options": {}
+      },
+      "id": "d99d94f2-d720-4d69-808a-a3b7bc4523ca",
+      "name": "Mark Not Submitted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1744,
+        -640
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZszMNlKAqV742gYX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8898215930:AAEwD9zLqZGctWWqianKcldTMkyd1DXbjcQ/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "1075335869"
+            },
+            {
+              "name": "text",
+              "value": "=⌛ 12 hours passed with no submission confirmation: {{ $json['Job Role'] }} at {{ $json.Company }}. Marked Not-Submitted in the tracker. Apply link: {{ $json.URL }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3e3891af-933f-48b0-a8fc-66f051272da0",
+      "name": "Notify - Expired",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2032,
+        -640
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "callback_query"
+        ],
+        "additionalFields": {}
+      },
+      "id": "9151c65f-348b-4768-b469-f43472be0e19",
+      "name": "Telegram Trigger - Callback",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -4304,
+        432
+      ],
+      "webhookId": "9a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "credentials": {
+        "telegramApi": {
+          "id": "ArmZJ3QgkiKvezYP",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.callback_query.data }}",
+              "rightValue": "submitted_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2e29c0f7-a983-4806-a0d1-2b39b6bb4fba",
+      "name": "Is Submission Callback?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -4080,
+        432
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "6391e380-899d-4ff2-bef5-a17778dd5854",
+      "name": "Ignore - Not Submission Callback",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -3776,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const cb = $json.callback_query;\nconst jobId = (cb.data || '').replace(/^submitted_/, '');\nreturn {\n  json: {\n    jobId,\n    chatId: cb.message.chat.id,\n    messageId: cb.message.message_id,\n    callbackQueryId: cb.id,\n    originalText: cb.message.text || ''\n  }\n};"
+      },
+      "id": "004f25fa-6933-4e56-bba6-2b8929a1ac3f",
+      "name": "Parse Submission Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3760,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1CU4lnucXtczQPdayWnJ6bh336M7UhKOVLBY4gatYTbI",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Applications"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "Job ID"
+          ],
+          "value": {
+            "Job ID": "={{ $json.jobId }}",
+            "Status": "Submitted",
+            "Date Submitted": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "2bc5603a-d297-44e8-ba4f-7fd1d14f98bd",
+      "name": "Update Status - Submitted",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -3504,
+        416
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ZszMNlKAqV742gYX",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8898215930:AAEwD9zLqZGctWWqianKcldTMkyd1DXbjcQ/answerCallbackQuery",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "callback_query_id",
+              "value": "={{ $('Parse Submission Callback').item.json.callbackQueryId }}"
+            },
+            {
+              "name": "text",
+              "value": "✅ Marked as submitted!"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "866549d4-0cf5-46c0-9483-e50b57c255b3",
+      "name": "Answer Callback Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3280,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8898215930:AAEwD9zLqZGctWWqianKcldTMkyd1DXbjcQ/editMessageText",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $('Parse Submission Callback').item.json.chatId }}"
+            },
+            {
+              "name": "message_id",
+              "value": "={{ $('Parse Submission Callback').item.json.messageId }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $('Parse Submission Callback').item.json.originalText }}\n\n✅ Confirmed submitted."
+            },
+            {
+              "name": "reply_markup",
+              "value": "={\n  \"inline_keyboard\": []\n}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e510bd8f-b8c1-4ffd-b092-cc8e052d9389",
+      "name": "Edit Confirmation Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -3024,
+        416
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule - 4:00 PM": {
+      "main": [
+        [
+          {
+            "node": "Fetch LinkedIn Jobs (Apify)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch New Job Listings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch New Job Listings": {
+      "main": [
+        [
+          {
+            "node": "Extract Job List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Job List": {
+      "main": [
+        [
+          {
+            "node": "Merge Job Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch LinkedIn Jobs (Apify)": {
+      "main": [
+        [
+          {
+            "node": "Extract LinkedIn Job List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract LinkedIn Job List": {
+      "main": [
+        [
+          {
+            "node": "Merge Job Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Job Sources": {
+      "main": [
+        [
+          {
+            "node": "Dedupe Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedupe Jobs": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Jobs": {
+      "main": [
+        [
+          {
+            "node": "All Jobs Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Master Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Master Resume": {
+      "main": [
+        [
+          {
+            "node": "Convert Resume Binary to Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Resume Binary to Text": {
+      "main": [
+        [
+          {
+            "node": "Build Gemini Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gemini Request": {
+      "main": [
+        [
+          {
+            "node": "Call Gemini - Tailor Resume",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Gemini - Tailor Resume": {
+      "main": [
+        [
+          {
+            "node": "Check Session Limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Session Limit": {
+      "main": [
+        [
+          {
+            "node": "Notify - Session Reached",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Tailored Resume Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify - Session Reached": {
+      "main": [
+        [
+          {
+            "node": "Stop Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tailored Resume Text": {
+      "main": [
+        [
+          {
+            "node": "Create file from text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create file from text": {
+      "main": [
+        [
+          {
+            "node": "Export Resume as PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify - Submission Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Export Resume as PDF": {
+      "main": [
+        [
+          {
+            "node": "Upload Resume PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify - Submission Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Resume PDF": {
+      "main": [
+        [
+          {
+            "node": "Delete Draft Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify - Submission Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Draft Google Doc": {
+      "main": [
+        [
+          {
+            "node": "Send Apply Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Apply Prompt": {
+      "main": [
+        [
+          {
+            "node": "Log Notified - Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Notified - Pending": {
+      "main": [
+        [
+          {
+            "node": "Wait 12 Hours",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 12 Hours": {
+      "main": [
+        [
+          {
+            "node": "Check Submission Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Submission Status": {
+      "main": [
+        [
+          {
+            "node": "Already Submitted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Submitted?": {
+      "main": [
+        [
+          {
+            "node": "No Action Needed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Not Submitted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Not Submitted": {
+      "main": [
+        [
+          {
+            "node": "Notify - Expired",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Trigger - Callback": {
+      "main": [
+        [
+          {
+            "node": "Is Submission Callback?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Submission Callback?": {
+      "main": [
+        [
+          {
+            "node": "Parse Submission Callback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore - Not Submission Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Submission Callback": {
+      "main": [
+        [
+          {
+            "node": "Update Status - Submitted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status - Submitted": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback Query": {
+      "main": [
+        [
+          {
+            "node": "Edit Confirmation Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify - Submission Failed": {
+      "main": [
+        [
+          {
+            "node": "Log Failed - Resume Not Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Kolkata",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "59f92456-943e-4a65-8816-00d7c192ab0c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bef4ceaf65edd76f3d04e966d4cf28f2eef903ad3f15eb3bdd5086c50c585567"
+  },
+  "id": "tJk4ADc75NC0f0kW",
+  "tags": []
+}
